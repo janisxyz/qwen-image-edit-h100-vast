@@ -1,0 +1,37 @@
+ARG PYTORCH_IMAGE=pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+FROM ${PYTORCH_IMAGE}
+
+ARG COMFYUI_REF=0d8b7510bdc5409f4a76c3191e122ddea50f4aa2
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/workspace/cache/huggingface \
+    HF_HUB_ENABLE_HF_TRANSFER=1 \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512 \
+    COMFYUI_DIR=/opt/ComfyUI \
+    APP_DIR=/opt/qwen-worker \
+    DATA_DIR=/workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git curl ca-certificates ffmpeg libgl1 libglib2.0-0 tini \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/Comfy-Org/ComfyUI.git /opt/ComfyUI \
+    && cd /opt/ComfyUI \
+    && git checkout "${COMFYUI_REF}" \
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir \
+         fastapi==0.115.12 uvicorn[standard]==0.34.3 httpx==0.28.1 \
+         python-multipart==0.0.20 pydantic-settings==2.9.1 \
+         "huggingface_hub[hf_transfer]==0.33.0"
+
+WORKDIR /opt/qwen-worker
+COPY app ./app
+COPY scripts ./scripts
+COPY workflows ./workflows
+COPY tools ./tools
+COPY README.md LICENSE ./
+RUN chmod +x scripts/*.sh
+
+EXPOSE 8000
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/qwen-worker/scripts/entrypoint.sh"]
