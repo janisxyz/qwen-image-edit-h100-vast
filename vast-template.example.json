@@ -1,27 +1,46 @@
 {
-  "name": "Qwen Image Edit 2511 API",
-  "image": "ghcr.io/janisxyz/qwen-image-edit-h100-vast:h200-nvl",
-  "ports": [8000],
+  "name": "Qwen Image Edit 2511 API - Adaptive Full Quality",
+  "images": {
+    "RTX_6000_Ada": "ghcr.io/janisxyz/qwen-image-edit-h100-vast:rtx6000-ada",
+    "H100": "ghcr.io/janisxyz/qwen-image-edit-h100-vast:h100",
+    "H200_NVL": "ghcr.io/janisxyz/qwen-image-edit-h100-vast:h200-nvl"
+  },
+  "ports": [
+    "8000/tcp"
+  ],
   "volume_mount": "/workspace",
   "persistent_volume_gb": 180,
   "environment": {
     "PROFILE": "auto",
     "API_KEY": "replace-with-a-long-random-secret",
     "HF_TOKEN": "",
-    "DOWNLOAD_LIGHTNING_LORA": "0",
-    "COMFY_LISTEN_HOST": "127.0.0.1"
+    "COMFY_LISTEN_HOST": "127.0.0.1",
+    "DOWNLOAD_LOG_INTERVAL_SECONDS": "5",
+    "MODEL_DOWNLOAD_WORKERS": "3",
+    "MODEL_DOWNLOAD_RETRIES": "5"
+  },
+  "quality_mode": {
+    "model": "Qwen-Image-Edit-2511 full base model",
+    "steps": 40,
+    "cfg": 4.0,
+    "sampler": "euler",
+    "scheduler": "simple",
+    "denoise": 1.0,
+    "turbo": false,
+    "lightning_lora": false
   },
   "automatic_detection": {
     "RTX_4060_8GB": "GGUF Q2_K, low-VRAM mode, CPU VAE, 1 candidate",
+    "RTX_6000_Ada_48GB": "BF16, default smart-memory mode, 2GB reserve, 1 candidate",
     "H100_or_A100_80GB": "BF16, high-VRAM mode, default 2 and max 4 candidates",
     "H200_NVL_141GB": "BF16, GPU-only mode, default 4 and max 8 candidates"
   },
   "notes": [
+    "Use Docker ENTRYPOINT mode and leave entrypoint arguments empty.",
     "GPU name and VRAM are detected at container startup.",
     "The startup script downloads only the model required for the detected profile.",
-    "Omit candidates in API requests to use the detected automatic default.",
     "Reuse the same /workspace persistent volume to avoid downloading models again.",
-    "Expose port 8000 only; raw ComfyUI remains internal.",
-    "Manual environment overrides remain available for benchmarking."
+    "Expose 8000/tcp only; raw ComfyUI remains internal.",
+    "The workflow never attaches the optional Lightning acceleration LoRA."
   ]
 }
