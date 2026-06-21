@@ -12,10 +12,13 @@ services:
       HF_TOKEN: ${HF_TOKEN:-}
       DEFAULT_CANDIDATES: ${DEFAULT_CANDIDATES:-}
       MAX_CANDIDATES: ${MAX_CANDIDATES:-}
-      DOWNLOAD_LIGHTNING_LORA: ${DOWNLOAD_LIGHTNING_LORA:-0}
       COMFY_LISTEN_HOST: 127.0.0.1
+      DOWNLOAD_LOG_INTERVAL_SECONDS: ${DOWNLOAD_LOG_INTERVAL_SECONDS:-5}
+      MODEL_DOWNLOAD_WORKERS: ${MODEL_DOWNLOAD_WORKERS:-3}
+      MODEL_DOWNLOAD_RETRIES: ${MODEL_DOWNLOAD_RETRIES:-5}
     volumes:
       - qwen-h200-data:/workspace
+    shm_size: "32gb"
     deploy:
       resources:
         reservations:
