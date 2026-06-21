@@ -85,7 +85,7 @@ def main() -> None:
         default_candidates = 1
         max_candidates = 1
         comfy_gpu_mode = "normalvram"
-        cache_lru = 1
+        cache_lru = 0
         reserve_vram = 2.0
     elif memory_mb >= 40 * 1024:
         tier = "large-consumer"
@@ -125,7 +125,7 @@ def main() -> None:
             comfy_gpu_mode = "normalvram"
             default_candidates = min(default_candidates, 1)
             max_candidates = min(max_candidates, 1)
-            cache_lru = min(cache_lru, 1)
+            cache_lru = 0
             reserve_vram = max(reserve_vram, 2.0)
         elif comfy_gpu_mode in {"lowvram", "normalvram"}:
             comfy_gpu_mode = "highvram"
