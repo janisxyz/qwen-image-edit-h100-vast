@@ -1,84 +1,62 @@
 # Qwen Image Edit 2511 — Adaptive ComfyUI API
 
-A reusable ComfyUI container and authenticated API for Qwen-Image-Edit-2511. The container detects the NVIDIA GPU and available VRAM at startup, selects the appropriate model format, tunes ComfyUI memory mode, and chooses safe candidate-batch defaults.
+Authenticated ComfyUI API for the full Qwen-Image-Edit-2511 base model. The container detects the NVIDIA GPU and VRAM at startup, selects BF16 or GGUF, chooses a safe ComfyUI memory mode, downloads missing model files into `/workspace`, and exposes a small FastAPI service.
 
-| Detected hardware | Model path | ComfyUI mode | Automatic candidates |
-|---|---|---|---|
-| RTX 4060 / up to 10GB | Q2_K GGUF | low VRAM + CPU VAE | default 1, max 1 |
-| 11–16GB | Q3_K_M GGUF | low VRAM + CPU VAE | default 1, max 1 |
-| 20–39GB | Q4_K_M GGUF | low VRAM + CPU VAE | default 1, max 2 |
-| Generic 40–69GB GPUs | Q4_K_M GGUF | low VRAM + CPU VAE | default 2, max 3 |
-| RTX 6000 Ada 48GB | BF16 diffusion + FP8 text encoder | normal VRAM + smart offload | default 1, max 1 |
-| H100/A100 class, 70–119GB | BF16 diffusion + FP8 text encoder | high VRAM | default 2, max 4 |
-| H200 NVL class, 120GB+ | BF16 diffusion + FP8 text encoder | GPU only | default 4, max 8 |
+## Quality policy
 
-The production workflow uses the **full BF16 model at 20 steps and CFG 4**. Turbo/Lightning is not attached to the workflow.
+This project intentionally uses the **full base model**, not Turbo or the optional Lightning acceleration LoRA.
 
-Both profiles automatically download missing models into `/workspace/models`. Reattaching the same persistent volume prevents redownloads.
+The workflow follows the official high-quality Qwen/ComfyUI values:
 
-## Automatic adaptation
+| Setting | Value |
+|---|---:|
+| Steps | 40 |
+| CFG / true CFG | 4.0 |
+| Sampler | Euler |
+| Scheduler | Simple |
+| Denoise | 1.0 |
+| Model sampling shift | 3.1 |
+| CFGNorm strength | 1.0 |
+| Reference latent method | `index_timestep_zero` |
+| Turbo | Disabled |
+| Lightning LoRA | Not attached |
 
-Leave this in the environment:
+The API allows 20–100 steps, but defaults to 40. Forty steps are the official Qwen quality setting; ComfyUI documents 20 as a faster compromise.
+
+## Automatic hardware profiles
+
+Set:
 
 ```env
 PROFILE=auto
 ```
 
-At startup, `scripts/detect_hardware.py` reads the GPU name and total VRAM through `nvidia-smi`, then exports:
+| Detected hardware | Model | ComfyUI runtime | Candidate default / max |
+|---|---|---|---:|
+| RTX 4060 or up to 10GB | Q2_K GGUF | `--lowvram --cpu-vae` | 1 / 1 |
+| 11–16GB | Q3_K_M GGUF | `--lowvram --cpu-vae` | 1 / 1 |
+| 20–39GB | Q4_K_M GGUF | `--lowvram --cpu-vae` | 1 / 2 |
+| Generic 40–69GB | Q4_K_M GGUF | `--lowvram --cpu-vae` | 2 / 3 |
+| RTX 6000 Ada 48GB | BF16 | default DynamicVRAM + 2GB reserve | 1 / 1 |
+| H100/A100 70–119GB | BF16 | `--highvram` | 2 / 4 |
+| H200 NVL 120GB+ | BF16 | `--gpu-only` | 4 / 8 |
 
-```text
-PROFILE
-GPU_NAME
-GPU_VRAM_GB
-GPU_TIER
-MODEL_MODE
-COMFY_GPU_MODE
-DEFAULT_CANDIDATES
-MAX_CANDIDATES
-LOCAL_GGUF_FILENAME
-```
+For the RTX 6000 Ada, `normalvram` is an internal profile label. ComfyUI's normal/default VRAM mode has **no `--normalvram` CLI flag**, so the entrypoint intentionally passes no VRAM-mode flag and keeps smart offloading enabled.
 
-The detected values are also stored at:
+Detected values are written to:
 
 ```text
 /workspace/hardware.json
 ```
 
-Check them through:
+They are also returned by:
 
 ```bash
 curl http://localhost:8000/health
-curl -H "Authorization: Bearer local-test-key" http://localhost:8000/v1/capabilities
+curl -H "Authorization: Bearer YOUR_API_KEY" http://localhost:8000/v1/capabilities
 ```
 
-Omit `candidates` in an API request to use the detected automatic default. Every value can still be overridden through environment variables for benchmarking.
-
-## Local RTX 4060 test
-
-Requirements:
-
-- Docker Desktop with WSL2 backend
-- Current NVIDIA driver and Docker GPU support
-- 8GB VRAM
-- 32GB system RAM recommended
-- At least 40GB free storage
-
-```powershell
-Copy-Item .env.example .env -ErrorAction SilentlyContinue; docker compose -f docker-compose.4060.yml up --build
-```
-
-First startup downloads the automatically selected GGUF model, FP8 Qwen 2.5 VL encoder and Qwen VAE.
-
-```powershell
-curl http://localhost:8000/health
-curl -H "Authorization: Bearer local-test-key" http://localhost:8000/v1/models
-```
-
-ComfyUI is available locally at `http://localhost:8188`.
-
-## Cloud images
-
-GitHub Actions builds and publishes:
+## Published images
 
 ```text
 ghcr.io/janisxyz/qwen-image-edit-h100-vast:h100
@@ -87,118 +65,161 @@ ghcr.io/janisxyz/qwen-image-edit-h100-vast:rtx6000-ada
 ghcr.io/janisxyz/qwen-image-edit-h100-vast:4060
 ```
 
-The H100, H200 and RTX 6000 Ada tags use the same adaptive BF16 cloud image. With `PROFILE=auto`:
+The three cloud tags use the same adaptive cloud image. Their separate names make Vast.ai templates easier to understand.
 
-- H200 NVL selects BF16, GPU-only mode, default batch 4 and maximum batch 8.
-- H100/A100 class selects BF16, high-VRAM mode, default batch 2 and maximum batch 4.
-- RTX 6000 Ada selects BF16, normal-VRAM smart offloading, a 2GB VRAM reserve and one candidate per inference.
+## Vast.ai — RTX 6000 Ada
 
-The RTX 6000 Ada profile is deliberately conservative because the BF16 diffusion model, FP8 text encoder, VAE and runtime buffers do not all fit simultaneously in 48GB VRAM. Smart offloading keeps the full-quality BF16 workflow while avoiding an unsafe GPU-only configuration.
-
-For Vast.ai:
-
-1. Create a persistent volume of at least 180GB and mount it at `/workspace`.
-2. Choose the matching image tag for the rented GPU.
-3. Expose TCP port `8000`.
-4. Set `API_KEY`.
-5. Set `PROFILE=auto`.
-6. Keep raw ComfyUI internal unless you specifically need port `8188/tcp` for debugging.
-
-Example RTX 6000 Ada image:
+Use:
 
 ```text
-ghcr.io/janisxyz/qwen-image-edit-h100-vast:rtx6000-ada
+Image: ghcr.io/janisxyz/qwen-image-edit-h100-vast:rtx6000-ada
+Launch mode: Docker ENTRYPOINT
+Entrypoint arguments: empty
+Port: 8000/tcp
+Volume mount: /workspace
+Persistent storage: 180GB recommended
 ```
 
-Example Docker options:
+Docker options:
 
 ```text
--p 8000:8000 -e PROFILE=auto -e API_KEY=REPLACE_WITH_A_LONG_RANDOM_SECRET -e COMFY_LISTEN_HOST=127.0.0.1 -e DOWNLOAD_LOG_INTERVAL_SECONDS=5
+-p 8000:8000 -e PROFILE=auto -e API_KEY=REPLACE_WITH_LONG_RANDOM_SECRET -e COMFY_LISTEN_HOST=127.0.0.1 -e DOWNLOAD_LOG_INTERVAL_SECONDS=5 -e MODEL_DOWNLOAD_WORKERS=3 -e MODEL_DOWNLOAD_RETRIES=5 -e RESERVE_VRAM_GB=2.0
 ```
 
-The first boot downloads the required model set. Later boots reuse the persistent volume.
+The expected startup detection is:
 
-## Reference selection
+```text
+GPU_TIER=rtx6000-ada
+PROFILE=vast-h100
+MODEL_MODE=bf16
+COMFY_GPU_MODE=normalvram
+DEFAULT_CANDIDATES=1
+MAX_CANDIDATES=1
+```
 
-Qwen-Image-Edit-2511 receives up to three references in this workflow. Keep all 4–6 photos per doll, but choose the best three for each shot:
+The generated ComfyUI command should contain:
 
-- Front shot: full frontal, face close-up, body/clothing detail
-- Three-quarter shot: three-quarter, face, full body
-- Rear shot: rear/side, proportions, hair/material detail
+```text
+--reserve-vram 2.0 --fast-disk --cache-lru 1
+```
 
-## Upload references
+It must **not** contain `--normalvram`.
+
+See also:
+
+```text
+vast-template.rtx6000-ada.example.json
+docker-compose.rtx6000-ada.yml
+```
+
+## Local RTX 4060
+
+Requirements:
+
+- Docker Desktop with WSL2 backend
+- Current NVIDIA driver and Docker GPU support
+- 8GB dedicated VRAM
+- 32GB system RAM recommended
+- At least 40GB free storage
+
+```powershell
+Copy-Item .env.example .env -ErrorAction SilentlyContinue; docker compose -f docker-compose.4060.yml up --build
+```
+
+ComfyUI is exposed locally at `http://localhost:8188`; the authenticated API is at `http://localhost:8000`.
+
+## Model files
+
+Cloud BF16 profiles download:
+
+```text
+models/diffusion_models/qwen_image_edit_2511_bf16.safetensors
+models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors
+models/vae/qwen_image_vae.safetensors
+```
+
+Low-VRAM profiles download one of:
+
+```text
+models/unet/qwen-image-edit-2511-Q2_K.gguf
+models/unet/qwen-image-edit-2511-Q3_K_M.gguf
+models/unet/qwen-image-edit-2511-Q4_K_M.gguf
+```
+
+All downloads support progress logging, retries, partial-file resume, and atomic completion. Reusing the same `/workspace` volume prevents redownloads.
+
+## API use
+
+### Upload references
 
 ```bash
-curl -X POST http://localhost:8000/v1/assets \
-  -H "Authorization: Bearer local-test-key" \
+curl -X POST http://HOST:PORT/v1/assets \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -F "file=@front.jpg"
 ```
 
-Repeat for the other references. The response returns an `asset` path.
+Repeat for up to three references. Each response returns an `asset` path.
 
-## Submit an automatically sized job
-
-Leave out `candidates`:
+### Submit a full-quality job
 
 ```bash
-curl -X POST http://localhost:8000/v1/jobs \
-  -H "Authorization: Bearer local-test-key" \
+curl -X POST http://HOST:PORT/v1/jobs \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "prompt": "Create a premium studio product photograph. Preserve the exact doll identity, face, hair, makeup, material and body proportions. Change only pose, camera and lighting.",
+    "prompt": "Create a premium studio product photograph while preserving the exact subject identity.",
     "references": ["assets/FIRST.jpg", "assets/SECOND.jpg", "assets/THIRD.jpg"],
     "seed": 10001,
-    "steps": 20,
+    "steps": 40,
     "cfg": 4.0,
-    "output_prefix": "doll_001/shot_01"
+    "output_prefix": "product/shot_01"
   }'
 ```
 
-Poll:
+Omit `steps`, `cfg`, and `candidates` to use the detected defaults.
+
+### Poll
 
 ```bash
-curl -H "Authorization: Bearer local-test-key" http://localhost:8000/v1/jobs/PROMPT_ID
+curl -H "Authorization: Bearer YOUR_API_KEY" http://HOST:PORT/v1/jobs/PROMPT_ID
 ```
 
-## Queue a manifest
+### Download
+
+Use the authenticated relative URL returned in `outputs[].download`.
+
+## Batch and benchmark tools
 
 ```bash
-python -m pip install httpx
-python tools/submit_manifest.py \
-  --api http://localhost:8000 \
-  --token local-test-key \
-  --manifest manifest.example.json
+python tools/submit_manifest.py --api http://HOST:PORT --token YOUR_API_KEY --manifest manifest.example.json
 ```
-
-## Benchmark exact throughput
-
-Hardware detection chooses safe defaults, but the exact fastest batch depends on reference resolution and the host. Benchmark the allowed range once:
 
 ```bash
 python tools/benchmark.py \
-  --api https://YOUR-VAST-ENDPOINT \
+  --api http://HOST:PORT \
   --token YOUR_API_KEY \
   --reference front.jpg \
   --reference face.jpg \
   --reference three_quarter.jpg \
-  --prompt "Create a premium studio product photograph while preserving the exact doll identity." \
-  --candidate-sizes 1,2,4,6,8
+  --prompt "Preserve the exact subject identity while changing the camera angle." \
+  --candidate-sizes 1,2
 ```
 
-Use the batch size with the lowest `seconds_per_image`, not the highest momentary GPU utilization.
+The benchmark defaults to the official 40-step quality mode.
 
-## Automatic model downloads
+## Validation safeguards
 
-`scripts/bootstrap_models.py` is idempotent:
+CI validates:
 
-1. Checks the detected target model path.
-2. Reuses existing model files.
-3. Downloads only missing files.
-4. Stores the Hugging Face cache under `/workspace/cache/huggingface`.
-5. Atomically moves completed files into ComfyUI's model folders.
+- Python, shell, JSON, and Compose syntax
+- RTX 4060, RTX 6000 Ada, H100, and H200 detector outputs
+- Exact 40-step / CFG 4 / Euler / Simple workflow settings
+- Absence of Turbo, Lightning, and LoRA loader nodes
+- Absence of the invalid `--normalvram` flag
+- Dependency consistency and transformer import smoke tests
 
-Destroy the GPU instance only when `/workspace` is persistent. Keep another copy of references and outputs.
+Docker builds also run shell/Python syntax checks and compare runtime flags against the pinned ComfyUI CLI.
 
 ## Security
 
-The public API requires a bearer token. Cloud profiles bind raw ComfyUI to localhost. The local 4060 compose file exposes port 8188 for debugging only.
+The public FastAPI service requires a bearer token. Cloud profiles bind raw ComfyUI to `127.0.0.1`; expose only `8000/tcp` unless temporary ComfyUI debugging is required.
