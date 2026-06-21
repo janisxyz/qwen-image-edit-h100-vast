@@ -1,0 +1,27 @@
+services:
+  qwen-4060:
+    build:
+      context: .
+      dockerfile: Dockerfile.4060
+    image: ghcr.io/janisxyz/qwen-image-edit-h100-vast:4060
+    ports:
+      - "8000:8000"
+      - "8188:8188"
+    environment:
+      PROFILE: local-4060
+      API_KEY: ${API_KEY:-local-test-key}
+      HF_TOKEN: ${HF_TOKEN:-}
+      LOCAL_GGUF_FILENAME: ${LOCAL_GGUF_FILENAME:-qwen-image-edit-2511-Q2_K.gguf}
+      MAX_CANDIDATES: 1
+      COMFY_LISTEN_HOST: 0.0.0.0
+      RESERVE_VRAM_GB: ${RESERVE_VRAM_GB:-1.0}
+    volumes:
+      - ./workspace-4060:/workspace
+    shm_size: "8gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
