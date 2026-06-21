@@ -42,6 +42,7 @@ jobs:
               assert sampler["denoise"] == 1.0, (file, sampler)
               assert data["6"]["inputs"]["shift"] == 3.1
               assert data["7"]["inputs"]["strength"] == 1.0
+              assert data["7"]["inputs"]["pre_cfg"] is False
               assert data["11"]["inputs"]["prompt"] == ""
               assert data["12"]["inputs"]["reference_latents_method"] == "index_timestep_zero"
               assert data["13"]["inputs"]["reference_latents_method"] == "index_timestep_zero"
@@ -67,9 +68,15 @@ jobs:
               assert quality["cfg"] == 4.0
               assert quality["sampler"] == "euler"
               assert quality["scheduler"] == "simple"
+              assert quality["denoise"] == 1.0
               assert quality["turbo"] is False
               assert quality["lightning_lora"] is False
               print(f"Vast template valid: {file}")
+
+          rtx = json.loads(Path("vast-template.rtx6000-ada.example.json").read_text())
+          detected = rtx["expected_detection"]
+          assert detected["comfy_cache_lru"] == 0
+          assert detected["reserve_vram_gb"] == 2.0
           PY
 
       - name: Validate shell syntax and supported ComfyUI flags
@@ -85,7 +92,7 @@ jobs:
       - name: Test automatic GPU profile detection
         run: |
           test_gpu() {
-            name="$1"; memory="$2"; expected_profile="$3"; expected_tier="$4"; expected_mode="$5"
+            name="$1"; memory="$2"; expected_profile="$3"; expected_tier="$4"; expected_mode="$5"; expected_cache="$6"; expected_reserve="$7"
             fake="$(mktemp -d)"
             cat > "$fake/nvidia-smi" <<EOF
           #!/usr/bin/env bash
@@ -96,11 +103,13 @@ jobs:
             grep -F "export PROFILE=$expected_profile" "$fake/result"
             grep -F "export GPU_TIER=$expected_tier" "$fake/result"
             grep -F "export COMFY_GPU_MODE=$expected_mode" "$fake/result"
+            grep -F "export COMFY_CACHE_LRU=$expected_cache" "$fake/result"
+            grep -F "export RESERVE_VRAM_GB=$expected_reserve" "$fake/result"
           }
-          test_gpu "NVIDIA GeForce RTX 4060 Laptop GPU" 8188 local-4060 low-vram lowvram
-          test_gpu "NVIDIA RTX 6000 Ada Generation" 49140 vast-h100 rtx6000-ada normalvram
-          test_gpu "NVIDIA H100 80GB HBM3" 81559 vast-h100 h100-class highvram
-          test_gpu "NVIDIA H200 NVL" 143771 vast-h100 h200 gpu-only
+          test_gpu "NVIDIA GeForce RTX 4060 Laptop GPU" 8188 local-4060 low-vram lowvram 0 1.0
+          test_gpu "NVIDIA RTX 6000 Ada Generation" 49140 vast-h100 rtx6000-ada normalvram 0 2.0
+          test_gpu "NVIDIA H100 80GB HBM3" 81559 vast-h100 h100-class highvram 3 1.5
+          test_gpu "NVIDIA H200 NVL" 143771 vast-h100 h200 gpu-only 6 2.0
 
       - name: Validate compose templates
         run: |
