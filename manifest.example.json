@@ -8,7 +8,7 @@
         "dataset/doll_001/three_quarter.jpg"
       ],
       "seed": 10001,
-      "steps": 20,
+      "steps": 40,
       "cfg": 4.0,
       "output_prefix": "doll_001/shot_01_front"
     },
@@ -20,7 +20,7 @@
         "dataset/doll_001/front.jpg"
       ],
       "seed": 10002,
-      "steps": 20,
+      "steps": 40,
       "cfg": 4.0,
       "output_prefix": "doll_001/shot_02_three_quarter"
     }
