@@ -15,10 +15,13 @@
     "resolved_profile": "vast-h100",
     "model_mode": "bf16",
     "comfy_gpu_mode": "normalvram",
+    "comfy_cache_lru": 0,
+    "reserve_vram_gb": 2.0,
     "default_candidates": 1,
     "max_candidates": 1
   },
   "quality_mode": {
+    "model": "Qwen-Image-Edit-2511 full base model",
     "steps": 40,
     "cfg": 4.0,
     "sampler": "euler",
