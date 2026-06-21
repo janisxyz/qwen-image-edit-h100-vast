@@ -25,6 +25,11 @@ RUN git clone https://github.com/Comfy-Org/ComfyUI.git /opt/ComfyUI \
          python-multipart==0.0.20 pydantic-settings==2.9.1 \
          "huggingface_hub[hf_transfer]==0.33.0"
 
+# Included in the cloud image too, so PROFILE=auto can fall back to GGUF
+# when the same container is started on a smaller GPU.
+RUN git clone https://github.com/city96/ComfyUI-GGUF.git /opt/ComfyUI/custom_nodes/ComfyUI-GGUF \
+    && pip install --no-cache-dir -r /opt/ComfyUI/custom_nodes/ComfyUI-GGUF/requirements.txt
+
 WORKDIR /opt/qwen-worker
 COPY app ./app
 COPY scripts ./scripts
