@@ -1,0 +1,6 @@
+workspace-4060/
+workspace/
+.env
+__pycache__/
+*.pyc
+.DS_Store
