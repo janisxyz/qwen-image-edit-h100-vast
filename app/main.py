@@ -14,19 +14,27 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
-VERSION = "1.0.0"
-PROFILE = os.getenv("PROFILE", "vast-h100")
+VERSION = "1.1.0"
+PROFILE = os.getenv("PROFILE", "local-4060")
+REQUESTED_PROFILE = os.getenv("REQUESTED_PROFILE", PROFILE)
+GPU_NAME = os.getenv("GPU_NAME", "Unknown NVIDIA GPU")
+GPU_VRAM_GB = float(os.getenv("GPU_VRAM_GB", "0") or 0)
+GPU_TIER = os.getenv("GPU_TIER", "unknown")
+MODEL_MODE = os.getenv("MODEL_MODE", "gguf")
+COMFY_GPU_MODE = os.getenv("COMFY_GPU_MODE", "lowvram")
+DEFAULT_CANDIDATES = int(os.getenv("DEFAULT_CANDIDATES", "1"))
+MAX_CANDIDATES = int(os.getenv("MAX_CANDIDATES", "1"))
+LOCAL_GGUF_FILENAME = os.getenv("LOCAL_GGUF_FILENAME", "qwen-image-edit-2511-Q2_K.gguf")
 COMFY_URL = os.getenv("COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
 WORKFLOW_DIR = Path(os.getenv("WORKFLOW_DIR", "/workspace/workflows"))
 INPUT_DIR = Path(os.getenv("COMFY_INPUT_DIR", "/workspace/input")).resolve()
 OUTPUT_DIR = Path(os.getenv("COMFY_OUTPUT_DIR", "/workspace/output")).resolve()
 API_KEY = os.getenv("API_KEY", "")
-MAX_CANDIDATES = int(os.getenv("MAX_CANDIDATES", "4" if PROFILE == "vast-h100" else "1"))
 
 app = FastAPI(
     title="Qwen Image Edit ComfyUI API",
     version=VERSION,
-    description=f"Profile: {PROFILE}",
+    description=f"Resolved profile: {PROFILE}; GPU: {GPU_NAME}",
 )
 
 
@@ -56,7 +64,7 @@ def child_path(root: Path, relative: str) -> Path:
 class JobRequest(BaseModel):
     prompt: str = Field(min_length=3, max_length=12_000)
     references: list[str] = Field(min_length=1, max_length=3)
-    candidates: int = Field(default=1, ge=1)
+    candidates: int | None = Field(default=None, ge=1)
     seed: int = Field(default=1, ge=0, le=2**64 - 1)
     steps: int = Field(default=20, ge=1, le=100)
     cfg: float = Field(default=4.0, ge=0.0, le=20.0)
@@ -100,10 +108,19 @@ def workflow_name() -> str:
     raise HTTPException(500, f"Unknown PROFILE={PROFILE}")
 
 
-def build_workflow(job: JobRequest) -> dict:
-    if job.candidates > MAX_CANDIDATES:
-        raise HTTPException(400, f"This profile allows at most {MAX_CANDIDATES} candidates per inference.")
+def resolve_candidates(job: JobRequest) -> int:
+    candidates = job.candidates if job.candidates is not None else DEFAULT_CANDIDATES
+    if candidates > MAX_CANDIDATES:
+        raise HTTPException(
+            400,
+            f"Detected {GPU_NAME} allows at most {MAX_CANDIDATES} candidates per inference; "
+            f"omit candidates to use the automatic default of {DEFAULT_CANDIDATES}.",
+        )
+    return candidates
 
+
+def build_workflow(job: JobRequest) -> tuple[dict, int]:
+    candidates = resolve_candidates(job)
     path = WORKFLOW_DIR / workflow_name()
     if not path.is_file():
         raise HTTPException(500, f"Workflow missing: {path}")
@@ -119,17 +136,33 @@ def build_workflow(job: JobRequest) -> dict:
         workflow[node_id]["inputs"]["image"] = ref
 
     if PROFILE == "local-4060":
-        workflow["5"]["inputs"]["unet_name"] = os.getenv(
-            "LOCAL_GGUF_FILENAME", "qwen-image-edit-2511-Q2_K.gguf"
-        )
+        workflow["5"]["inputs"]["unet_name"] = LOCAL_GGUF_FILENAME
 
     workflow["10"]["inputs"]["prompt"] = job.prompt
-    workflow["15"]["inputs"]["amount"] = job.candidates
+    workflow["15"]["inputs"]["amount"] = candidates
     workflow["16"]["inputs"]["seed"] = job.seed
     workflow["16"]["inputs"]["steps"] = job.steps
     workflow["16"]["inputs"]["cfg"] = job.cfg
     workflow["18"]["inputs"]["filename_prefix"] = job.output_prefix
-    return workflow
+    return workflow, candidates
+
+
+def capabilities_payload() -> dict:
+    return {
+        "requested_profile": REQUESTED_PROFILE,
+        "resolved_profile": PROFILE,
+        "gpu_name": GPU_NAME,
+        "gpu_vram_gb": GPU_VRAM_GB,
+        "gpu_tier": GPU_TIER,
+        "model_mode": MODEL_MODE,
+        "comfy_gpu_mode": COMFY_GPU_MODE,
+        "default_candidates": DEFAULT_CANDIDATES,
+        "max_candidates": MAX_CANDIDATES,
+        "gguf_filename": LOCAL_GGUF_FILENAME if MODEL_MODE == "gguf" else None,
+        "turbo": False,
+        "steps_default": 20,
+        "cfg_default": 4.0,
+    }
 
 
 @app.get("/health")
@@ -141,10 +174,14 @@ async def health() -> dict:
     return {
         "ok": True,
         "version": VERSION,
-        "profile": PROFILE,
-        "max_candidates": MAX_CANDIDATES,
+        "capabilities": capabilities_payload(),
         "comfyui": stats,
     }
+
+
+@app.get("/v1/capabilities", dependencies=[Depends(auth)])
+async def capabilities() -> dict:
+    return capabilities_payload()
 
 
 @app.get("/v1/models", dependencies=[Depends(auth)])
@@ -158,7 +195,7 @@ async def models() -> dict:
         "vae": Path("/workspace/models/vae/qwen_image_vae.safetensors"),
     }
     return {
-        "profile": PROFILE,
+        "capabilities": capabilities_payload(),
         "files": {
             name: {
                 "present": path.is_file(),
@@ -184,10 +221,12 @@ async def upload(file: UploadFile = File(...)) -> dict:
 
 @app.post("/v1/jobs", dependencies=[Depends(auth)])
 async def create_job(job: JobRequest) -> dict:
-    result = await post_json("/prompt", {"prompt": build_workflow(job)})
+    workflow, candidates = build_workflow(job)
+    result = await post_json("/prompt", {"prompt": workflow})
     return {
         "prompt_id": result.get("prompt_id"),
         "number": result.get("number"),
+        "candidates": candidates,
         "node_errors": result.get("node_errors", {}),
     }
 
@@ -196,10 +235,12 @@ async def create_job(job: JobRequest) -> dict:
 async def create_batch(batch: BatchRequest) -> dict:
     queued = []
     for job in batch.jobs:
-        result = await post_json("/prompt", {"prompt": build_workflow(job)})
+        workflow, candidates = build_workflow(job)
+        result = await post_json("/prompt", {"prompt": workflow})
         queued.append({
             "prompt_id": result.get("prompt_id"),
             "number": result.get("number"),
+            "candidates": candidates,
             "output_prefix": job.output_prefix,
         })
     return {"count": len(queued), "queued": queued}
