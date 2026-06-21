@@ -91,8 +91,8 @@ case "$PROFILE:$COMFY_GPU_MODE" in
     COMFY_ARGS+=(--highvram)
     ;;
   vast-h100:normalvram)
-    # Normal VRAM is ComfyUI's default. No VRAM-mode flag is required.
-    COMFY_ARGS+=(--reserve-vram "${RESERVE_VRAM_GB:-2.0}" --fast-disk)
+    # Normal VRAM is ComfyUI's default. Keep DynamicVRAM and RAM offloading enabled.
+    COMFY_ARGS+=(--reserve-vram "${RESERVE_VRAM_GB:-2.0}")
     ;;
   local-4060:lowvram)
     COMFY_ARGS+=(--lowvram --cpu-vae --reserve-vram "${RESERVE_VRAM_GB:-1.0}" --cache-none --fast-disk)
