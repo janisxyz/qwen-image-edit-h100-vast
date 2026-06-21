@@ -1,0 +1,32 @@
+services:
+  qwen-rtx6000-ada:
+    build:
+      context: .
+      dockerfile: Dockerfile.h100
+    image: ghcr.io/janisxyz/qwen-image-edit-h100-vast:rtx6000-ada
+    ports:
+      - "8000:8000"
+    environment:
+      PROFILE: ${PROFILE:-auto}
+      API_KEY: ${API_KEY:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+      DEFAULT_CANDIDATES: ${DEFAULT_CANDIDATES:-}
+      MAX_CANDIDATES: ${MAX_CANDIDATES:-}
+      COMFY_LISTEN_HOST: 127.0.0.1
+      DOWNLOAD_LOG_INTERVAL_SECONDS: ${DOWNLOAD_LOG_INTERVAL_SECONDS:-5}
+      MODEL_DOWNLOAD_WORKERS: ${MODEL_DOWNLOAD_WORKERS:-3}
+      MODEL_DOWNLOAD_RETRIES: ${MODEL_DOWNLOAD_RETRIES:-5}
+      RESERVE_VRAM_GB: ${RESERVE_VRAM_GB:-2.0}
+    volumes:
+      - qwen-rtx6000-ada-data:/workspace
+    shm_size: "16gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  qwen-rtx6000-ada-data:
