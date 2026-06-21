@@ -53,8 +53,10 @@ def main() -> None:
     requested_profile = (os.getenv("PROFILE", "auto").strip() or "auto").lower()
     upper_name = gpu_name.upper()
 
+    is_rtx6000_ada = "RTX 6000 ADA" in upper_name
     name_only_h200_fallback = memory_mb == 0 and "H200" in upper_name
     name_only_h100_fallback = memory_mb == 0 and ("H100" in upper_name or "A100" in upper_name)
+    name_only_rtx6000_ada_fallback = memory_mb == 0 and is_rtx6000_ada
 
     if memory_mb >= 120 * 1024 or name_only_h200_fallback:
         tier = "h200"
@@ -74,6 +76,17 @@ def main() -> None:
         comfy_gpu_mode = "highvram"
         cache_lru = 3
         reserve_vram = 1.5
+    elif (
+        is_rtx6000_ada and memory_mb >= 44 * 1024
+    ) or name_only_rtx6000_ada_fallback:
+        tier = "rtx6000-ada"
+        auto_profile = "vast-rtx6000-ada"
+        model_mode = "bf16"
+        default_candidates = 1
+        max_candidates = 2
+        comfy_gpu_mode = "normalvram"
+        cache_lru = 1
+        reserve_vram = 2.0
     elif memory_mb >= 40 * 1024:
         tier = "large-consumer"
         auto_profile = "local-4060"
@@ -103,13 +116,23 @@ def main() -> None:
         reserve_vram = 1.0
 
     profile = auto_profile if requested_profile == "auto" else requested_profile
-    if profile not in {"vast-h100", "local-4060"}:
-        raise SystemExit(f"Unsupported PROFILE={profile!r}; use auto, vast-h100, or local-4060")
+    supported_profiles = {"vast-h100", "vast-rtx6000-ada", "local-4060"}
+    if profile not in supported_profiles:
+        raise SystemExit(
+            f"Unsupported PROFILE={profile!r}; use auto, vast-h100, vast-rtx6000-ada, or local-4060"
+        )
 
     if profile == "vast-h100":
         model_mode = "bf16"
-        if comfy_gpu_mode == "lowvram":
+        if comfy_gpu_mode in {"lowvram", "normalvram"}:
             comfy_gpu_mode = "highvram"
+    elif profile == "vast-rtx6000-ada":
+        model_mode = "bf16"
+        comfy_gpu_mode = "normalvram"
+        default_candidates = min(default_candidates, 1)
+        max_candidates = min(max_candidates, 2)
+        cache_lru = min(cache_lru, 1)
+        reserve_vram = max(reserve_vram, 2.0)
     else:
         model_mode = "gguf"
         comfy_gpu_mode = "lowvram"
