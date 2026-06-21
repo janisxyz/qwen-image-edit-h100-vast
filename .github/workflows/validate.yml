@@ -20,7 +20,7 @@ jobs:
           python-version: "3.12"
 
       - name: Validate Python syntax
-        run: python -m py_compile app/main.py scripts/bootstrap_models.py tools/benchmark.py tools/submit_manifest.py
+        run: python -m py_compile app/main.py scripts/bootstrap_models.py scripts/detect_hardware.py tools/benchmark.py tools/submit_manifest.py
 
       - name: Validate JSON
         run: |
