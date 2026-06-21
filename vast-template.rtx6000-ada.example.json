@@ -1,0 +1,30 @@
+{
+  "name": "Qwen Image Edit 2511 - RTX 6000 Ada - Full Quality",
+  "image": "ghcr.io/janisxyz/qwen-image-edit-h100-vast:rtx6000-ada",
+  "launch_mode": "docker_entrypoint",
+  "entrypoint_args": "",
+  "on_start_script": "",
+  "docker_options": "-p 8000:8000 -e PROFILE=auto -e API_KEY=REPLACE_WITH_LONG_RANDOM_SECRET -e COMFY_LISTEN_HOST=127.0.0.1 -e DOWNLOAD_LOG_INTERVAL_SECONDS=5 -e MODEL_DOWNLOAD_WORKERS=3 -e MODEL_DOWNLOAD_RETRIES=5 -e RESERVE_VRAM_GB=2.0",
+  "ports": [
+    "8000/tcp"
+  ],
+  "volume_mount": "/workspace",
+  "persistent_volume_gb": 180,
+  "expected_detection": {
+    "gpu_tier": "rtx6000-ada",
+    "resolved_profile": "vast-h100",
+    "model_mode": "bf16",
+    "comfy_gpu_mode": "normalvram",
+    "default_candidates": 1,
+    "max_candidates": 1
+  },
+  "quality_mode": {
+    "steps": 40,
+    "cfg": 4.0,
+    "sampler": "euler",
+    "scheduler": "simple",
+    "denoise": 1.0,
+    "turbo": false,
+    "lightning_lora": false
+  }
+}
