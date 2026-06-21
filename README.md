@@ -37,11 +37,11 @@ PROFILE=auto
 | 11–16GB | Q3_K_M GGUF | `--lowvram --cpu-vae` | 1 / 1 |
 | 20–39GB | Q4_K_M GGUF | `--lowvram --cpu-vae` | 1 / 2 |
 | Generic 40–69GB | Q4_K_M GGUF | `--lowvram --cpu-vae` | 2 / 3 |
-| RTX 6000 Ada 48GB | BF16 | default DynamicVRAM + 2GB reserve | 1 / 1 |
+| RTX 6000 Ada 48GB | BF16 | default DynamicVRAM + RAM offload + 2GB reserve | 1 / 1 |
 | H100/A100 70–119GB | BF16 | `--highvram` | 2 / 4 |
 | H200 NVL 120GB+ | BF16 | `--gpu-only` | 4 / 8 |
 
-For the RTX 6000 Ada, `normalvram` is an internal profile label. ComfyUI's normal/default VRAM mode has **no `--normalvram` CLI flag**, so the entrypoint intentionally passes no VRAM-mode flag and keeps smart offloading enabled.
+For the RTX 6000 Ada, `normalvram` is an internal profile label. ComfyUI's normal/default VRAM mode has **no `--normalvram` CLI flag**, so the entrypoint intentionally passes no VRAM-mode flag. It keeps DynamicVRAM, asynchronous offloading, pinned RAM, and the default RAM-pressure cache enabled. This is preferable to disk-backed offloading on hosts with sufficient RAM.
 
 Detected values are written to:
 
@@ -93,6 +93,7 @@ GPU_TIER=rtx6000-ada
 PROFILE=vast-h100
 MODEL_MODE=bf16
 COMFY_GPU_MODE=normalvram
+COMFY_CACHE_LRU=0
 DEFAULT_CANDIDATES=1
 MAX_CANDIDATES=1
 ```
@@ -100,10 +101,10 @@ MAX_CANDIDATES=1
 The generated ComfyUI command should contain:
 
 ```text
---reserve-vram 2.0 --fast-disk --cache-lru 1
+--reserve-vram 2.0
 ```
 
-It must **not** contain `--normalvram`.
+It must **not** contain `--normalvram`, `--highvram`, `--gpu-only`, `--lowvram`, or `--fast-disk` for this profile.
 
 See also:
 
