@@ -22,28 +22,100 @@ jobs:
       - name: Validate Python syntax
         run: python -m py_compile app/main.py scripts/bootstrap_models.py scripts/detect_hardware.py tools/benchmark.py tools/submit_manifest.py
 
-      - name: Validate JSON
+      - name: Validate official non-Turbo workflow settings
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
 
-          files = [
+          workflow_files = [
               Path("workflows/qwen_edit_h100.json"),
               Path("workflows/qwen_edit_4060.json"),
-              Path("manifest.example.json"),
-              Path("vast-template.example.json"),
           ]
-          for file in files:
-              json.loads(file.read_text(encoding="utf-8"))
-              print(f"valid: {file}")
+          for file in workflow_files:
+              data = json.loads(file.read_text(encoding="utf-8"))
+              sampler = data["16"]["inputs"]
+              assert sampler["steps"] == 40, (file, sampler)
+              assert sampler["cfg"] == 4.0, (file, sampler)
+              assert sampler["sampler_name"] == "euler", (file, sampler)
+              assert sampler["scheduler"] == "simple", (file, sampler)
+              assert sampler["denoise"] == 1.0, (file, sampler)
+              assert data["6"]["inputs"]["shift"] == 3.1
+              assert data["7"]["inputs"]["strength"] == 1.0
+              assert data["11"]["inputs"]["prompt"] == ""
+              assert data["12"]["inputs"]["reference_latents_method"] == "index_timestep_zero"
+              assert data["13"]["inputs"]["reference_latents_method"] == "index_timestep_zero"
+              assert data["15"]["inputs"]["amount"] == 1
+              serialized = json.dumps(data).lower()
+              assert "lightning" not in serialized
+              assert "loraloader" not in serialized
+              assert "turbo" not in serialized
+              print(f"official quality workflow valid: {file}")
+
+          h100 = json.loads(Path("workflows/qwen_edit_h100.json").read_text())
+          assert h100["5"]["inputs"]["unet_name"] == "qwen_image_edit_2511_bf16.safetensors"
+          assert h100["8"]["inputs"]["clip_name"] == "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+          assert h100["9"]["inputs"]["vae_name"] == "qwen_image_vae.safetensors"
+
+          manifest = json.loads(Path("manifest.example.json").read_text())
+          assert all(job["steps"] == 40 and job["cfg"] == 4.0 for job in manifest["jobs"])
+
+          for file in [Path("vast-template.example.json"), Path("vast-template.rtx6000-ada.example.json")]:
+              data = json.loads(file.read_text())
+              quality = data["quality_mode"]
+              assert quality["steps"] == 40
+              assert quality["cfg"] == 4.0
+              assert quality["sampler"] == "euler"
+              assert quality["scheduler"] == "simple"
+              assert quality["turbo"] is False
+              assert quality["lightning_lora"] is False
+              print(f"Vast template valid: {file}")
           PY
 
-      - name: Validate shell syntax
-        run: bash -n scripts/entrypoint.sh
+      - name: Validate shell syntax and supported ComfyUI flags
+        run: |
+          bash -n scripts/entrypoint.sh
+          if grep -Fq -- '--normalvram' scripts/entrypoint.sh; then
+            echo 'Unsupported ComfyUI flag --normalvram found'
+            exit 1
+          fi
+          grep -Fq 'Normal VRAM is ComfyUI' scripts/entrypoint.sh
+          grep -Fq -- '--reserve-vram' scripts/entrypoint.sh
 
-      - name: Validate compose files
+      - name: Test automatic GPU profile detection
+        run: |
+          test_gpu() {
+            name="$1"; memory="$2"; expected_profile="$3"; expected_tier="$4"; expected_mode="$5"
+            fake="$(mktemp -d)"
+            cat > "$fake/nvidia-smi" <<EOF
+          #!/usr/bin/env bash
+          echo "$name, $memory"
+          EOF
+            chmod +x "$fake/nvidia-smi"
+            PATH="$fake:$PATH" DATA_DIR="$fake/data" PROFILE=auto python scripts/detect_hardware.py > "$fake/result"
+            grep -F "export PROFILE=$expected_profile" "$fake/result"
+            grep -F "export GPU_TIER=$expected_tier" "$fake/result"
+            grep -F "export COMFY_GPU_MODE=$expected_mode" "$fake/result"
+          }
+          test_gpu "NVIDIA GeForce RTX 4060 Laptop GPU" 8188 local-4060 low-vram lowvram
+          test_gpu "NVIDIA RTX 6000 Ada Generation" 49140 vast-h100 rtx6000-ada normalvram
+          test_gpu "NVIDIA H100 80GB HBM3" 81559 vast-h100 h100-class highvram
+          test_gpu "NVIDIA H200 NVL" 143771 vast-h100 h200 gpu-only
+
+      - name: Validate compose templates
         run: |
           docker compose -f docker-compose.h100.yml config >/dev/null
           docker compose -f docker-compose.h200-nvl.yml config >/dev/null
+          docker compose -f docker-compose.rtx6000-ada.yml config >/dev/null
           docker compose -f docker-compose.4060.yml config >/dev/null
+
+      - name: Validate dependency safeguards
+        run: |
+          grep -Fq 'pip check' Dockerfile.h100
+          grep -Fq 'pip check' Dockerfile.4060
+          grep -Fq 'from transformers import CLIPTokenizer' Dockerfile.h100
+          grep -Fq 'from transformers import CLIPTokenizer' Dockerfile.4060
+          if grep -R -Fq 'huggingface_hub[hf_transfer]==0.33.0' Dockerfile.*; then
+            echo 'Known-bad huggingface_hub pin found'
+            exit 1
+          fi
