@@ -1,30 +1,27 @@
 {
   "name": "Qwen Image Edit 2511 API",
-  "image": "ghcr.io/janisxyz/qwen-image-edit-h100-vast:h100",
-  "recommended_gpu_profiles": {
-    "H100_80GB": {
-      "PROFILE": "vast-h100",
-      "MAX_CANDIDATES": "4"
-    },
-    "H200_NVL_141GB": {
-      "PROFILE": "vast-h100",
-      "MAX_CANDIDATES": "8"
-    }
-  },
+  "image": "ghcr.io/janisxyz/qwen-image-edit-h100-vast:h200-nvl",
   "ports": [8000],
   "volume_mount": "/workspace",
   "persistent_volume_gb": 180,
   "environment": {
+    "PROFILE": "auto",
     "API_KEY": "replace-with-a-long-random-secret",
     "HF_TOKEN": "",
     "DOWNLOAD_LIGHTNING_LORA": "0",
     "COMFY_LISTEN_HOST": "127.0.0.1"
   },
+  "automatic_detection": {
+    "RTX_4060_8GB": "GGUF Q2_K, low-VRAM mode, CPU VAE, 1 candidate",
+    "H100_or_A100_80GB": "BF16, high-VRAM mode, default 2 and max 4 candidates",
+    "H200_NVL_141GB": "BF16, GPU-only mode, default 4 and max 8 candidates"
+  },
   "notes": [
-    "The same BF16 container image supports H100 and H200 NVL.",
-    "The startup script automatically downloads only missing models.",
+    "GPU name and VRAM are detected at container startup.",
+    "The startup script downloads only the model required for the detected profile.",
+    "Omit candidates in API requests to use the detected automatic default.",
     "Reuse the same /workspace persistent volume to avoid downloading models again.",
     "Expose port 8000 only; raw ComfyUI remains internal.",
-    "Benchmark candidate sizes before production."
+    "Manual environment overrides remain available for benchmarking."
   ]
 }
