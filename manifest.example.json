@@ -7,7 +7,6 @@
         "dataset/doll_001/face.jpg",
         "dataset/doll_001/three_quarter.jpg"
       ],
-      "candidates": 1,
       "seed": 10001,
       "steps": 20,
       "cfg": 4.0,
@@ -20,7 +19,6 @@
         "dataset/doll_001/face.jpg",
         "dataset/doll_001/front.jpg"
       ],
-      "candidates": 1,
       "seed": 10002,
       "steps": 20,
       "cfg": 4.0,
