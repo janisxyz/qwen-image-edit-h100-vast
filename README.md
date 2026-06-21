@@ -7,7 +7,8 @@ A reusable ComfyUI container and authenticated API for Qwen-Image-Edit-2511. The
 | RTX 4060 / up to 10GB | Q2_K GGUF | low VRAM + CPU VAE | default 1, max 1 |
 | 11–16GB | Q3_K_M GGUF | low VRAM + CPU VAE | default 1, max 1 |
 | 20–39GB | Q4_K_M GGUF | low VRAM + CPU VAE | default 1, max 2 |
-| 40–69GB | Q4_K_M GGUF | low VRAM + CPU VAE | default 2, max 3 |
+| Generic 40–69GB GPUs | Q4_K_M GGUF | low VRAM + CPU VAE | default 2, max 3 |
+| RTX 6000 Ada 48GB | BF16 diffusion + FP8 text encoder | normal VRAM + smart offload | default 1, max 1 |
 | H100/A100 class, 70–119GB | BF16 diffusion + FP8 text encoder | high VRAM | default 2, max 4 |
 | H200 NVL class, 120GB+ | BF16 diffusion + FP8 text encoder | GPU only | default 4, max 8 |
 
@@ -82,19 +83,38 @@ GitHub Actions builds and publishes:
 ```text
 ghcr.io/janisxyz/qwen-image-edit-h100-vast:h100
 ghcr.io/janisxyz/qwen-image-edit-h100-vast:h200-nvl
+ghcr.io/janisxyz/qwen-image-edit-h100-vast:rtx6000-ada
 ghcr.io/janisxyz/qwen-image-edit-h100-vast:4060
 ```
 
-The H100 and H200 tags use the same adaptive cloud image. On an H200 NVL it automatically selects BF16, GPU-only mode, default batch 4 and maximum batch 8.
+The H100, H200 and RTX 6000 Ada tags use the same adaptive BF16 cloud image. With `PROFILE=auto`:
+
+- H200 NVL selects BF16, GPU-only mode, default batch 4 and maximum batch 8.
+- H100/A100 class selects BF16, high-VRAM mode, default batch 2 and maximum batch 4.
+- RTX 6000 Ada selects BF16, normal-VRAM smart offloading, a 2GB VRAM reserve and one candidate per inference.
+
+The RTX 6000 Ada profile is deliberately conservative because the BF16 diffusion model, FP8 text encoder, VAE and runtime buffers do not all fit simultaneously in 48GB VRAM. Smart offloading keeps the full-quality BF16 workflow while avoiding an unsafe GPU-only configuration.
 
 For Vast.ai:
 
 1. Create a persistent volume of at least 180GB and mount it at `/workspace`.
-2. Use `ghcr.io/janisxyz/qwen-image-edit-h100-vast:h200-nvl` for the H200 offer.
-3. Expose HTTP port `8000`.
+2. Choose the matching image tag for the rented GPU.
+3. Expose TCP port `8000`.
 4. Set `API_KEY`.
 5. Set `PROFILE=auto`.
-6. Keep raw ComfyUI internal.
+6. Keep raw ComfyUI internal unless you specifically need port `8188/tcp` for debugging.
+
+Example RTX 6000 Ada image:
+
+```text
+ghcr.io/janisxyz/qwen-image-edit-h100-vast:rtx6000-ada
+```
+
+Example Docker options:
+
+```text
+-p 8000:8000 -e PROFILE=auto -e API_KEY=REPLACE_WITH_A_LONG_RANDOM_SECRET -e COMFY_LISTEN_HOST=127.0.0.1 -e DOWNLOAD_LOG_INTERVAL_SECONDS=5
+```
 
 The first boot downloads the required model set. Later boots reuse the persistent volume.
 
