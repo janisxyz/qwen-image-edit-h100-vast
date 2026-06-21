@@ -1,0 +1,27 @@
+services:
+  qwen-h100:
+    build:
+      context: .
+      dockerfile: Dockerfile.h100
+    image: ghcr.io/janisxyz/qwen-image-edit-h100-vast:h100
+    ports:
+      - "8000:8000"
+    environment:
+      PROFILE: vast-h100
+      API_KEY: ${API_KEY:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+      MAX_CANDIDATES: ${MAX_CANDIDATES:-4}
+      DOWNLOAD_LIGHTNING_LORA: ${DOWNLOAD_LIGHTNING_LORA:-0}
+      COMFY_LISTEN_HOST: 127.0.0.1
+    volumes:
+      - qwen-h100-data:/workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  qwen-h100-data:
