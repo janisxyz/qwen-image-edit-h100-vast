@@ -42,7 +42,14 @@ COPY scripts ./scripts
 COPY workflows ./workflows
 COPY tools ./tools
 COPY README.md LICENSE ./
-RUN chmod +x scripts/*.sh
+RUN chmod +x scripts/*.sh \
+    && bash -n scripts/entrypoint.sh \
+    && python -m py_compile app/main.py scripts/bootstrap_models.py scripts/detect_hardware.py \
+    && ! grep -Fq -- '--normalvram' scripts/entrypoint.sh \
+    && cd /opt/ComfyUI \
+    && python main.py --help >/tmp/comfy-help.txt \
+    && grep -Fq -- '--reserve-vram' /tmp/comfy-help.txt \
+    && grep -Fq -- '--gpu-only' /tmp/comfy-help.txt
 
 EXPOSE 8000
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/qwen-worker/scripts/entrypoint.sh"]
