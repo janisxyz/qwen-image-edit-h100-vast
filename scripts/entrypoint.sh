@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PROFILE="${PROFILE:-vast-h100}"
+PROFILE="${PROFILE:-auto}"
 DATA_DIR="${DATA_DIR:-/workspace}"
 COMFYUI_DIR="${COMFYUI_DIR:-/opt/ComfyUI}"
 APP_DIR="${APP_DIR:-/opt/qwen-worker}"
@@ -28,6 +28,10 @@ done
 
 cp -f "$APP_DIR"/workflows/*.json "$DATA_DIR/workflows/"
 
+python "$APP_DIR/scripts/detect_hardware.py" > /tmp/qwen-hardware.env
+# shellcheck disable=SC1091
+source /tmp/qwen-hardware.env
+
 if [[ -z "${API_KEY:-}" ]]; then
   if [[ -s "$DATA_DIR/API_KEY.txt" ]]; then
     export API_KEY="$(cat "$DATA_DIR/API_KEY.txt")"
@@ -42,7 +46,10 @@ PY
   fi
 fi
 
-echo "[startup] profile=$PROFILE"
+echo "[startup] GPU: $GPU_NAME (${GPU_VRAM_GB} GB)"
+echo "[startup] tier=$GPU_TIER requested_profile=$REQUESTED_PROFILE resolved_profile=$PROFILE"
+echo "[startup] model=$MODEL_MODE default_candidates=$DEFAULT_CANDIDATES max_candidates=$MAX_CANDIDATES"
+echo "[startup] comfy_gpu_mode=$COMFY_GPU_MODE gguf=$LOCAL_GGUF_FILENAME"
 echo "[startup] API key file: $DATA_DIR/API_KEY.txt"
 echo "[startup] checking models (existing files are reused)"
 python "$APP_DIR/scripts/bootstrap_models.py"
@@ -55,7 +62,14 @@ COMFY_ARGS=(
 
 case "$PROFILE" in
   vast-h100)
-    COMFY_ARGS+=(--highvram --cache-lru 3)
+    if [[ "$COMFY_GPU_MODE" == "gpu-only" ]]; then
+      COMFY_ARGS+=(--gpu-only)
+    else
+      COMFY_ARGS+=(--highvram)
+    fi
+    if [[ "${COMFY_CACHE_LRU:-0}" -gt 0 ]]; then
+      COMFY_ARGS+=(--cache-lru "$COMFY_CACHE_LRU")
+    fi
     ;;
   local-4060)
     COMFY_ARGS+=(
@@ -67,7 +81,7 @@ case "$PROFILE" in
     )
     ;;
   *)
-    echo "Unknown PROFILE=$PROFILE" >&2
+    echo "Unknown resolved PROFILE=$PROFILE" >&2
     exit 2
     ;;
 esac
