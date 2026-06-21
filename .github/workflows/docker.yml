@@ -24,12 +24,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: H100 and H200 NVL BF16
+          - name: H100, H200 NVL and RTX 6000 Ada BF16
             dockerfile: Dockerfile.h100
             cache_scope: cloud-bf16
             tags: |
               ghcr.io/janisxyz/qwen-image-edit-h100-vast:h100
               ghcr.io/janisxyz/qwen-image-edit-h100-vast:h200-nvl
+              ghcr.io/janisxyz/qwen-image-edit-h100-vast:rtx6000-ada
           - name: RTX 4060 GGUF
             dockerfile: Dockerfile.4060
             cache_scope: local-4060
