@@ -95,8 +95,8 @@ def human_bytes(value: float) -> str:
 def human_duration(seconds: float | None) -> str:
     if seconds is None or seconds < 0 or seconds == float("inf"):
         return "unknown"
-    seconds = int(seconds)
-    hours, remainder = divmod(seconds, 3600)
+    total = int(seconds)
+    hours, remainder = divmod(total, 3600)
     minutes, seconds = divmod(remainder, 60)
     if hours:
         return f"{hours}h {minutes:02d}m {seconds:02d}s"
@@ -119,20 +119,27 @@ def remote_url(repo_id: str, filename: str) -> str:
     return f"https://huggingface.co/{repo_id}/resolve/main/{quote(filename, safe='/')}"
 
 
-def remote_size(client: httpx.Client, url: str, label: str) -> int:
-    log(label, "requesting remote file metadata")
-    response = client.head(url)
-    response.raise_for_status()
-    raw = response.headers.get("x-linked-size") or response.headers.get("content-length") or "0"
+def integer_header(value: str | None) -> int:
     try:
-        size = int(raw)
+        return int(value or 0)
     except ValueError:
-        size = 0
-    if size:
-        log(label, f"remote size={human_bytes(size)}")
-    else:
-        log(label, "remote size unavailable; progress will show bytes and speed without percentage")
-    return size
+        return 0
+
+
+def response_total(response: httpx.Response, existing: int, resumed: bool) -> int:
+    linked_size = integer_header(response.headers.get("x-linked-size"))
+    if linked_size:
+        return linked_size
+
+    content_range = response.headers.get("content-range", "")
+    if "/" in content_range:
+        total_text = content_range.rsplit("/", 1)[-1]
+        total = integer_header(total_text if total_text != "*" else None)
+        if total:
+            return total
+
+    content_length = integer_header(response.headers.get("content-length"))
+    return existing + content_length if resumed and content_length else content_length
 
 
 def stream_download(item: dict[str, object]) -> str:
@@ -155,28 +162,24 @@ def stream_download(item: dict[str, object]) -> str:
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
+            existing = partial.stat().st_size if partial.is_file() else 0
+            request_headers: dict[str, str] = {}
+            if existing:
+                request_headers["Range"] = f"bytes={existing}-"
+                log(label, f"attempt {attempt}/{MAX_RETRIES}; resuming at {human_bytes(existing)}")
+            else:
+                log(label, f"attempt {attempt}/{MAX_RETRIES}; starting download")
+
             with httpx.Client(headers=auth_headers(), follow_redirects=True, timeout=timeout) as client:
-                expected_total = remote_size(client, url, label)
-                existing = partial.stat().st_size if partial.is_file() else 0
-
-                if expected_total and existing > expected_total:
-                    log(label, "partial file is larger than remote file; discarding invalid partial")
-                    partial.unlink(missing_ok=True)
-                    existing = 0
-
-                request_headers: dict[str, str] = {}
-                if existing:
-                    request_headers["Range"] = f"bytes={existing}-"
-                    log(
-                        label,
-                        f"attempt {attempt}/{MAX_RETRIES}; resuming at {human_bytes(existing)}",
-                    )
-                else:
-                    log(label, f"attempt {attempt}/{MAX_RETRIES}; starting download")
-
                 with client.stream("GET", url, headers=request_headers) as response:
-                    if response.status_code == 416 and expected_total and existing == expected_total:
-                        log(label, "partial file already contains the complete remote file")
+                    if response.status_code == 416:
+                        total = response_total(response, existing, True)
+                        if total and existing == total:
+                            log(label, "partial file already contains the complete remote file")
+                        else:
+                            raise RuntimeError(
+                                f"server rejected resume range; partial={existing} remote={total or 'unknown'}"
+                            )
                     else:
                         response.raise_for_status()
                         resumed = existing > 0 and response.status_code == 206
@@ -184,8 +187,12 @@ def stream_download(item: dict[str, object]) -> str:
                             log(label, "server did not accept resume request; restarting from byte zero")
                             existing = 0
 
-                        content_length = int(response.headers.get("content-length") or 0)
-                        total = expected_total or (existing + content_length if resumed else content_length)
+                        total = response_total(response, existing, resumed)
+                        if total:
+                            log(label, f"remote size={human_bytes(total)}")
+                        else:
+                            log(label, "remote size unavailable; showing bytes and speed without percentage")
+
                         mode = "ab" if resumed else "wb"
                         current = existing
                         attempt_start = time.monotonic()
@@ -208,9 +215,7 @@ def stream_download(item: dict[str, object]) -> str:
                                         percent = min(current / total * 100, 100.0)
                                         remaining = max(total - current, 0)
                                         eta = remaining / average_speed
-                                        progress = (
-                                            f"{percent:6.2f}%  {human_bytes(current)} / {human_bytes(total)}"
-                                        )
+                                        progress = f"{percent:6.2f}% {human_bytes(current)} / {human_bytes(total)}"
                                     else:
                                         eta = None
                                         progress = human_bytes(current)
@@ -229,20 +234,18 @@ def stream_download(item: dict[str, object]) -> str:
                                 f"incomplete download: received {current} bytes, expected {total} bytes"
                             )
 
-                final_size = partial.stat().st_size
-                if final_size <= 1_000_000:
-                    raise RuntimeError(
-                        f"downloaded model is unexpectedly small: {final_size} bytes"
-                    )
+            final_size = partial.stat().st_size
+            if final_size <= 1_000_000:
+                raise RuntimeError(f"downloaded model is unexpectedly small: {final_size} bytes")
 
-                log(label, f"download complete; moving partial into place ({human_bytes(final_size)})")
-                partial.replace(target)
-                elapsed_all = time.monotonic() - started_all
-                log(
-                    label,
-                    f"ready target={target} size={human_bytes(final_size)} elapsed={human_duration(elapsed_all)}",
-                )
-                return f"ready {target} ({human_bytes(final_size)})"
+            log(label, f"download complete; moving partial into place ({human_bytes(final_size)})")
+            partial.replace(target)
+            elapsed_all = time.monotonic() - started_all
+            log(
+                label,
+                f"ready target={target} size={human_bytes(final_size)} elapsed={human_duration(elapsed_all)}",
+            )
+            return f"ready {target} ({human_bytes(final_size)})"
         except Exception as exc:
             if attempt >= MAX_RETRIES:
                 log(label, f"FAILED after {attempt} attempts: {type(exc).__name__}: {exc}")
