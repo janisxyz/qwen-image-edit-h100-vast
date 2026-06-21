@@ -107,11 +107,21 @@ declare -a COMFY_ARGS=(
 
 case "$PROFILE" in
   vast-h100)
-    if [[ "$COMFY_GPU_MODE" == "gpu-only" ]]; then
-      COMFY_ARGS+=(--gpu-only)
-    else
-      COMFY_ARGS+=(--highvram)
-    fi
+    case "$COMFY_GPU_MODE" in
+      gpu-only)
+        COMFY_ARGS+=(--gpu-only)
+        ;;
+      normalvram)
+        COMFY_ARGS+=(
+          --normalvram
+          --reserve-vram "${RESERVE_VRAM_GB:-2.0}"
+          --fast-disk
+        )
+        ;;
+      *)
+        COMFY_ARGS+=(--highvram)
+        ;;
+    esac
     if [[ "${COMFY_CACHE_LRU:-0}" -gt 0 ]]; then
       COMFY_ARGS+=(--cache-lru "$COMFY_CACHE_LRU")
     fi
