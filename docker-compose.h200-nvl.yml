@@ -3,14 +3,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.h100
-    image: ghcr.io/janisxyz/qwen-image-edit-h100-vast:h100
+    image: ghcr.io/janisxyz/qwen-image-edit-h100-vast:h200-nvl
     ports:
       - "8000:8000"
     environment:
-      PROFILE: vast-h100
+      PROFILE: ${PROFILE:-auto}
       API_KEY: ${API_KEY:-}
       HF_TOKEN: ${HF_TOKEN:-}
-      MAX_CANDIDATES: ${MAX_CANDIDATES:-8}
+      DEFAULT_CANDIDATES: ${DEFAULT_CANDIDATES:-}
+      MAX_CANDIDATES: ${MAX_CANDIDATES:-}
       DOWNLOAD_LIGHTNING_LORA: ${DOWNLOAD_LIGHTNING_LORA:-0}
       COMFY_LISTEN_HOST: 127.0.0.1
     volumes:
