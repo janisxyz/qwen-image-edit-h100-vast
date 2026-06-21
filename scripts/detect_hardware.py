@@ -80,10 +80,10 @@ def main() -> None:
         is_rtx6000_ada and memory_mb >= 44 * 1024
     ) or name_only_rtx6000_ada_fallback:
         tier = "rtx6000-ada"
-        auto_profile = "vast-rtx6000-ada"
+        auto_profile = "vast-h100"
         model_mode = "bf16"
         default_candidates = 1
-        max_candidates = 2
+        max_candidates = 1
         comfy_gpu_mode = "normalvram"
         cache_lru = 1
         reserve_vram = 2.0
@@ -116,23 +116,19 @@ def main() -> None:
         reserve_vram = 1.0
 
     profile = auto_profile if requested_profile == "auto" else requested_profile
-    supported_profiles = {"vast-h100", "vast-rtx6000-ada", "local-4060"}
-    if profile not in supported_profiles:
-        raise SystemExit(
-            f"Unsupported PROFILE={profile!r}; use auto, vast-h100, vast-rtx6000-ada, or local-4060"
-        )
+    if profile not in {"vast-h100", "local-4060"}:
+        raise SystemExit(f"Unsupported PROFILE={profile!r}; use auto, vast-h100, or local-4060")
 
     if profile == "vast-h100":
         model_mode = "bf16"
-        if comfy_gpu_mode in {"lowvram", "normalvram"}:
+        if tier == "rtx6000-ada":
+            comfy_gpu_mode = "normalvram"
+            default_candidates = min(default_candidates, 1)
+            max_candidates = min(max_candidates, 1)
+            cache_lru = min(cache_lru, 1)
+            reserve_vram = max(reserve_vram, 2.0)
+        elif comfy_gpu_mode in {"lowvram", "normalvram"}:
             comfy_gpu_mode = "highvram"
-    elif profile == "vast-rtx6000-ada":
-        model_mode = "bf16"
-        comfy_gpu_mode = "normalvram"
-        default_candidates = min(default_candidates, 1)
-        max_candidates = min(max_candidates, 2)
-        cache_lru = min(cache_lru, 1)
-        reserve_vram = max(reserve_vram, 2.0)
     else:
         model_mode = "gguf"
         comfy_gpu_mode = "lowvram"
