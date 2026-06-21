@@ -1,0 +1,30 @@
+{
+  "jobs": [
+    {
+      "prompt": "Create a premium full-body studio product photograph. Preserve the exact doll identity, facial sculpt, eye shape, makeup, hair, skin material, body proportions and construction. Change only pose, camera angle, lighting and background.",
+      "reference_files": [
+        "dataset/doll_001/front.jpg",
+        "dataset/doll_001/face.jpg",
+        "dataset/doll_001/three_quarter.jpg"
+      ],
+      "candidates": 1,
+      "seed": 10001,
+      "steps": 20,
+      "cfg": 4.0,
+      "output_prefix": "doll_001/shot_01_front"
+    },
+    {
+      "prompt": "Create a premium three-quarter studio product photograph. Preserve the exact doll identity, facial sculpt, eye shape, makeup, hair, skin material, body proportions and construction. Change only pose, camera angle, lighting and background.",
+      "reference_files": [
+        "dataset/doll_001/three_quarter.jpg",
+        "dataset/doll_001/face.jpg",
+        "dataset/doll_001/front.jpg"
+      ],
+      "candidates": 1,
+      "seed": 10002,
+      "steps": 20,
+      "cfg": 4.0,
+      "output_prefix": "doll_001/shot_02_three_quarter"
+    }
+  ]
+}
