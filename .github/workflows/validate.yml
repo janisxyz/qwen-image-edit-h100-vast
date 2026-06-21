@@ -1,0 +1,49 @@
+name: Validate project
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate Python syntax
+        run: python -m py_compile app/main.py scripts/bootstrap_models.py tools/benchmark.py tools/submit_manifest.py
+
+      - name: Validate JSON
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          files = [
+              Path("workflows/qwen_edit_h100.json"),
+              Path("workflows/qwen_edit_4060.json"),
+              Path("manifest.example.json"),
+              Path("vast-template.example.json"),
+          ]
+          for file in files:
+              json.loads(file.read_text(encoding="utf-8"))
+              print(f"valid: {file}")
+          PY
+
+      - name: Validate shell syntax
+        run: bash -n scripts/entrypoint.sh
+
+      - name: Validate compose files
+        run: |
+          docker compose -f docker-compose.h100.yml config >/dev/null
+          docker compose -f docker-compose.h200-nvl.yml config >/dev/null
+          docker compose -f docker-compose.4060.yml config >/dev/null
