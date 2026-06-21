@@ -1,0 +1,30 @@
+{
+  "name": "Qwen Image Edit 2511 API",
+  "image": "ghcr.io/janisxyz/qwen-image-edit-h100-vast:h100",
+  "recommended_gpu_profiles": {
+    "H100_80GB": {
+      "PROFILE": "vast-h100",
+      "MAX_CANDIDATES": "4"
+    },
+    "H200_NVL_141GB": {
+      "PROFILE": "vast-h100",
+      "MAX_CANDIDATES": "8"
+    }
+  },
+  "ports": [8000],
+  "volume_mount": "/workspace",
+  "persistent_volume_gb": 180,
+  "environment": {
+    "API_KEY": "replace-with-a-long-random-secret",
+    "HF_TOKEN": "",
+    "DOWNLOAD_LIGHTNING_LORA": "0",
+    "COMFY_LISTEN_HOST": "127.0.0.1"
+  },
+  "notes": [
+    "The same BF16 container image supports H100 and H200 NVL.",
+    "The startup script automatically downloads only missing models.",
+    "Reuse the same /workspace persistent volume to avoid downloading models again.",
+    "Expose port 8000 only; raw ComfyUI remains internal.",
+    "Benchmark candidate sizes before production."
+  ]
+}
