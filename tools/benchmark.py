@@ -38,7 +38,7 @@ def main() -> None:
     parser.add_argument("--reference", action="append", required=True)
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--candidate-sizes", default="1,2,3,4")
-    parser.add_argument("--steps", type=int, default=20)
+    parser.add_argument("--steps", type=int, default=40)
     parser.add_argument("--cfg", type=float, default=4.0)
     args = parser.parse_args()
 
