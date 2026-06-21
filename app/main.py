@@ -6,6 +6,7 @@ import re
 import secrets
 import shutil
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -14,7 +15,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 PROFILE = os.getenv("PROFILE", "local-4060")
 REQUESTED_PROFILE = os.getenv("REQUESTED_PROFILE", PROFILE)
 GPU_NAME = os.getenv("GPU_NAME", "Unknown NVIDIA GPU")
@@ -36,6 +37,29 @@ app = FastAPI(
     version=VERSION,
     description=f"Resolved profile: {PROFILE}; GPU: {GPU_NAME}",
 )
+
+
+def log(event: str, **fields: object) -> None:
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    details = " ".join(f"{key}={value!r}" for key, value in fields.items())
+    print(f"{stamp} [api] {event}{' ' + details if details else ''}", flush=True)
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    log(
+        "service.ready",
+        version=VERSION,
+        profile=PROFILE,
+        requested_profile=REQUESTED_PROFILE,
+        gpu=GPU_NAME,
+        vram_gb=GPU_VRAM_GB,
+        tier=GPU_TIER,
+        model_mode=MODEL_MODE,
+        comfy_gpu_mode=COMFY_GPU_MODE,
+        default_candidates=DEFAULT_CANDIDATES,
+        max_candidates=MAX_CANDIDATES,
+    )
 
 
 def auth(authorization: str | None = Header(default=None)) -> None:
@@ -96,6 +120,7 @@ async def post_json(path: str, body: dict) -> dict:
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(f"{COMFY_URL}{path}", json=body)
         if response.status_code >= 400:
+            log("comfy.request_failed", path=path, status=response.status_code)
             raise HTTPException(response.status_code, response.text)
         return response.json()
 
@@ -144,6 +169,17 @@ def build_workflow(job: JobRequest) -> tuple[dict, int]:
     workflow["16"]["inputs"]["steps"] = job.steps
     workflow["16"]["inputs"]["cfg"] = job.cfg
     workflow["18"]["inputs"]["filename_prefix"] = job.output_prefix
+    log(
+        "workflow.ready",
+        workflow=path.name,
+        references=refs,
+        candidates=candidates,
+        seed=job.seed,
+        steps=job.steps,
+        cfg=job.cfg,
+        output_prefix=job.output_prefix,
+        prompt_chars=len(job.prompt),
+    )
     return workflow, candidates
 
 
@@ -170,13 +206,9 @@ async def health() -> dict:
     try:
         stats = await get_json("/system_stats")
     except Exception as exc:
+        log("health.failed", error=str(exc))
         raise HTTPException(503, f"ComfyUI unavailable: {exc}") from exc
-    return {
-        "ok": True,
-        "version": VERSION,
-        "capabilities": capabilities_payload(),
-        "comfyui": stats,
-    }
+    return {"ok": True, "version": VERSION, "capabilities": capabilities_payload(), "comfyui": stats}
 
 
 @app.get("/v1/capabilities", dependencies=[Depends(auth)])
@@ -194,35 +226,44 @@ async def models() -> dict:
         "text_encoder": Path("/workspace/models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"),
         "vae": Path("/workspace/models/vae/qwen_image_vae.safetensors"),
     }
-    return {
-        "capabilities": capabilities_payload(),
-        "files": {
-            name: {
-                "present": path.is_file(),
-                "bytes": path.stat().st_size if path.is_file() else 0,
-            }
-            for name, path in files.items()
-        },
+    result = {
+        name: {"present": path.is_file(), "bytes": path.stat().st_size if path.is_file() else 0}
+        for name, path in files.items()
     }
+    log("models.inspected", files=result)
+    return {"capabilities": capabilities_payload(), "files": result}
 
 
 @app.post("/v1/assets", dependencies=[Depends(auth)])
 async def upload(file: UploadFile = File(...)) -> dict:
-    suffix = Path(file.filename or "upload.png").suffix.lower()
+    original = file.filename or "upload.png"
+    suffix = Path(original).suffix.lower()
     if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
         raise HTTPException(400, "Allowed formats: PNG, JPG, JPEG, WEBP")
     relative = f"assets/{int(time.time())}_{secrets.token_hex(6)}{suffix}"
     target = child_path(INPUT_DIR, relative)
     target.parent.mkdir(parents=True, exist_ok=True)
+    log("asset.upload_started", filename=original, asset=relative)
     with target.open("wb") as destination:
         shutil.copyfileobj(file.file, destination)
-    return {"asset": relative, "bytes": target.stat().st_size}
+    size = target.stat().st_size
+    log("asset.upload_completed", filename=original, asset=relative, bytes=size)
+    return {"asset": relative, "bytes": size}
 
 
 @app.post("/v1/jobs", dependencies=[Depends(auth)])
 async def create_job(job: JobRequest) -> dict:
+    log("job.submission_started", output_prefix=job.output_prefix, candidates=job.candidates or "auto")
     workflow, candidates = build_workflow(job)
     result = await post_json("/prompt", {"prompt": workflow})
+    log(
+        "job.queued",
+        prompt_id=result.get("prompt_id"),
+        queue_number=result.get("number"),
+        candidates=candidates,
+        output_prefix=job.output_prefix,
+        node_errors=result.get("node_errors", {}),
+    )
     return {
         "prompt_id": result.get("prompt_id"),
         "number": result.get("number"),
@@ -233,8 +274,10 @@ async def create_job(job: JobRequest) -> dict:
 
 @app.post("/v1/batches", dependencies=[Depends(auth)])
 async def create_batch(batch: BatchRequest) -> dict:
+    log("batch.started", jobs=len(batch.jobs))
     queued = []
-    for job in batch.jobs:
+    for index, job in enumerate(batch.jobs, start=1):
+        log("batch.job_started", index=index, total=len(batch.jobs), output_prefix=job.output_prefix)
         workflow, candidates = build_workflow(job)
         result = await post_json("/prompt", {"prompt": workflow})
         queued.append({
@@ -243,6 +286,8 @@ async def create_batch(batch: BatchRequest) -> dict:
             "candidates": candidates,
             "output_prefix": job.output_prefix,
         })
+        log("batch.job_queued", index=index, total=len(batch.jobs), prompt_id=result.get("prompt_id"))
+    log("batch.completed", queued=len(queued))
     return {"count": len(queued), "queued": queued}
 
 
@@ -250,6 +295,7 @@ async def create_batch(batch: BatchRequest) -> dict:
 async def job(prompt_id: str) -> dict:
     history = await get_json(f"/history/{prompt_id}")
     if prompt_id not in history:
+        log("job.status", prompt_id=prompt_id, status="queued_or_running")
         return {"prompt_id": prompt_id, "status": "queued_or_running"}
 
     item = history[prompt_id]
@@ -265,10 +311,12 @@ async def job(prompt_id: str) -> dict:
                 ),
             })
     status = item.get("status", {})
+    status_name = status.get("status_str", "completed")
+    log("job.status", prompt_id=prompt_id, status=status_name, outputs=len(outputs))
     return {
         "prompt_id": prompt_id,
         "completed": status.get("completed", True),
-        "status": status.get("status_str", "completed"),
+        "status": status_name,
         "outputs": outputs,
         "raw_status": status,
     }
@@ -281,14 +329,22 @@ async def file(filename: str, subfolder: str = "", type: Literal["output"] = "ou
     target = child_path(OUTPUT_DIR, relative)
     if not target.is_file():
         raise HTTPException(404, "Output file not found")
+    log("file.served", relative=relative, bytes=target.stat().st_size)
     return FileResponse(target)
 
 
 @app.get("/v1/queue", dependencies=[Depends(auth)])
 async def queue() -> dict:
-    return await get_json("/queue")
+    result = await get_json("/queue")
+    log(
+        "queue.inspected",
+        running=len(result.get("queue_running", [])),
+        pending=len(result.get("queue_pending", [])),
+    )
+    return result
 
 
 @app.post("/v1/interrupt", dependencies=[Depends(auth)])
 async def interrupt() -> dict:
+    log("generation.interrupt_requested")
     return await post_json("/interrupt", {})
