@@ -9,13 +9,21 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
+OFFICIAL_STEPS = 40
+OFFICIAL_CFG = 4.0
+OFFICIAL_SAMPLER = "euler"
+OFFICIAL_SCHEDULER = "simple"
+OFFICIAL_DENOISE = 1.0
+TURBO = False
+
 PROFILE = os.getenv("PROFILE", "local-4060")
 REQUESTED_PROFILE = os.getenv("REQUESTED_PROFILE", PROFILE)
 GPU_NAME = os.getenv("GPU_NAME", "Unknown NVIDIA GPU")
@@ -35,7 +43,7 @@ API_KEY = os.getenv("API_KEY", "")
 app = FastAPI(
     title="Qwen Image Edit ComfyUI API",
     version=VERSION,
-    description=f"Resolved profile: {PROFILE}; GPU: {GPU_NAME}",
+    description=f"Resolved profile: {PROFILE}; GPU: {GPU_NAME}; full base model, no Turbo/Lightning",
 )
 
 
@@ -47,25 +55,13 @@ def log(event: str, **fields: object) -> None:
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    log(
-        "service.ready",
-        version=VERSION,
-        profile=PROFILE,
-        requested_profile=REQUESTED_PROFILE,
-        gpu=GPU_NAME,
-        vram_gb=GPU_VRAM_GB,
-        tier=GPU_TIER,
-        model_mode=MODEL_MODE,
-        comfy_gpu_mode=COMFY_GPU_MODE,
-        default_candidates=DEFAULT_CANDIDATES,
-        max_candidates=MAX_CANDIDATES,
-    )
+    log("service.ready", **capabilities_payload())
 
 
 def auth(authorization: str | None = Header(default=None)) -> None:
-    expected = f"Bearer {API_KEY}"
     if not API_KEY:
         raise HTTPException(500, "API_KEY is not configured")
+    expected = f"Bearer {API_KEY}"
     if authorization is None or not secrets.compare_digest(authorization, expected):
         raise HTTPException(401, "Invalid bearer token")
 
@@ -90,8 +86,8 @@ class JobRequest(BaseModel):
     references: list[str] = Field(min_length=1, max_length=3)
     candidates: int | None = Field(default=None, ge=1)
     seed: int = Field(default=1, ge=0, le=2**64 - 1)
-    steps: int = Field(default=20, ge=1, le=100)
-    cfg: float = Field(default=4.0, ge=0.0, le=20.0)
+    steps: int = Field(default=OFFICIAL_STEPS, ge=20, le=100)
+    cfg: float = Field(default=OFFICIAL_CFG, ge=0.0, le=20.0)
     output_prefix: str = "qwen-edit/result"
 
     @field_validator("references")
@@ -154,7 +150,6 @@ def build_workflow(job: JobRequest) -> tuple[dict, int]:
     refs = list(job.references)
     while len(refs) < 3:
         refs.append(refs[-1])
-
     for node_id, ref in zip(("1", "2", "3"), refs):
         if not child_path(INPUT_DIR, ref).is_file():
             raise HTTPException(400, f"Reference does not exist: {ref}")
@@ -165,9 +160,15 @@ def build_workflow(job: JobRequest) -> tuple[dict, int]:
 
     workflow["10"]["inputs"]["prompt"] = job.prompt
     workflow["15"]["inputs"]["amount"] = candidates
-    workflow["16"]["inputs"]["seed"] = job.seed
-    workflow["16"]["inputs"]["steps"] = job.steps
-    workflow["16"]["inputs"]["cfg"] = job.cfg
+    sampler = workflow["16"]["inputs"]
+    sampler.update(
+        seed=job.seed,
+        steps=job.steps,
+        cfg=job.cfg,
+        sampler_name=OFFICIAL_SAMPLER,
+        scheduler=OFFICIAL_SCHEDULER,
+        denoise=OFFICIAL_DENOISE,
+    )
     workflow["18"]["inputs"]["filename_prefix"] = job.output_prefix
     log(
         "workflow.ready",
@@ -177,6 +178,9 @@ def build_workflow(job: JobRequest) -> tuple[dict, int]:
         seed=job.seed,
         steps=job.steps,
         cfg=job.cfg,
+        sampler=OFFICIAL_SAMPLER,
+        scheduler=OFFICIAL_SCHEDULER,
+        turbo=TURBO,
         output_prefix=job.output_prefix,
         prompt_chars=len(job.prompt),
     )
@@ -185,6 +189,7 @@ def build_workflow(job: JobRequest) -> tuple[dict, int]:
 
 def capabilities_payload() -> dict:
     return {
+        "version": VERSION,
         "requested_profile": REQUESTED_PROFILE,
         "resolved_profile": PROFILE,
         "gpu_name": GPU_NAME,
@@ -195,9 +200,14 @@ def capabilities_payload() -> dict:
         "default_candidates": DEFAULT_CANDIDATES,
         "max_candidates": MAX_CANDIDATES,
         "gguf_filename": LOCAL_GGUF_FILENAME if MODEL_MODE == "gguf" else None,
-        "turbo": False,
-        "steps_default": 20,
-        "cfg_default": 4.0,
+        "turbo": TURBO,
+        "lightning_lora": False,
+        "steps_default": OFFICIAL_STEPS,
+        "steps_minimum": 20,
+        "cfg_default": OFFICIAL_CFG,
+        "sampler": OFFICIAL_SAMPLER,
+        "scheduler": OFFICIAL_SCHEDULER,
+        "denoise": OFFICIAL_DENOISE,
     }
 
 
@@ -208,7 +218,7 @@ async def health() -> dict:
     except Exception as exc:
         log("health.failed", error=str(exc))
         raise HTTPException(503, f"ComfyUI unavailable: {exc}") from exc
-    return {"ok": True, "version": VERSION, "capabilities": capabilities_payload(), "comfyui": stats}
+    return {"ok": True, "capabilities": capabilities_payload(), "comfyui": stats}
 
 
 @app.get("/v1/capabilities", dependencies=[Depends(auth)])
@@ -274,20 +284,20 @@ async def create_job(job: JobRequest) -> dict:
 
 @app.post("/v1/batches", dependencies=[Depends(auth)])
 async def create_batch(batch: BatchRequest) -> dict:
-    log("batch.started", jobs=len(batch.jobs))
     queued = []
-    for index, job in enumerate(batch.jobs, start=1):
-        log("batch.job_started", index=index, total=len(batch.jobs), output_prefix=job.output_prefix)
-        workflow, candidates = build_workflow(job)
+    log("batch.started", jobs=len(batch.jobs))
+    for index, item in enumerate(batch.jobs, start=1):
+        workflow, candidates = build_workflow(item)
         result = await post_json("/prompt", {"prompt": workflow})
-        queued.append({
-            "prompt_id": result.get("prompt_id"),
-            "number": result.get("number"),
-            "candidates": candidates,
-            "output_prefix": job.output_prefix,
-        })
+        queued.append(
+            {
+                "prompt_id": result.get("prompt_id"),
+                "number": result.get("number"),
+                "candidates": candidates,
+                "output_prefix": item.output_prefix,
+            }
+        )
         log("batch.job_queued", index=index, total=len(batch.jobs), prompt_id=result.get("prompt_id"))
-    log("batch.completed", queued=len(queued))
     return {"count": len(queued), "queued": queued}
 
 
@@ -302,14 +312,14 @@ async def job(prompt_id: str) -> dict:
     outputs = []
     for node in item.get("outputs", {}).values():
         for image in node.get("images", []):
-            outputs.append({
-                **image,
-                "download": (
-                    f"/v1/files?filename={image.get('filename','')}"
-                    f"&subfolder={image.get('subfolder','')}"
-                    f"&type={image.get('type','output')}"
-                ),
-            })
+            params = urlencode(
+                {
+                    "filename": image.get("filename", ""),
+                    "subfolder": image.get("subfolder", ""),
+                    "type": image.get("type", "output"),
+                }
+            )
+            outputs.append({**image, "download": f"/v1/files?{params}"})
     status = item.get("status", {})
     status_name = status.get("status_str", "completed")
     log("job.status", prompt_id=prompt_id, status=status_name, outputs=len(outputs))
@@ -323,7 +333,7 @@ async def job(prompt_id: str) -> dict:
 
 
 @app.get("/v1/files", dependencies=[Depends(auth)])
-async def file(filename: str, subfolder: str = "", type: Literal["output"] = "output"):
+async def output_file(filename: str, subfolder: str = "", type: Literal["output"] = "output"):
     del type
     relative = f"{subfolder}/{filename}" if subfolder else filename
     target = child_path(OUTPUT_DIR, relative)
