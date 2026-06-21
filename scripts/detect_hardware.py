@@ -53,7 +53,10 @@ def main() -> None:
     requested_profile = (os.getenv("PROFILE", "auto").strip() or "auto").lower()
     upper_name = gpu_name.upper()
 
-    if memory_mb >= 120 * 1024 or "H200" in upper_name:
+    name_only_h200_fallback = memory_mb == 0 and "H200" in upper_name
+    name_only_h100_fallback = memory_mb == 0 and ("H100" in upper_name or "A100" in upper_name)
+
+    if memory_mb >= 120 * 1024 or name_only_h200_fallback:
         tier = "h200"
         auto_profile = "vast-h100"
         model_mode = "bf16"
@@ -62,7 +65,7 @@ def main() -> None:
         comfy_gpu_mode = "gpu-only"
         cache_lru = 6
         reserve_vram = 2.0
-    elif memory_mb >= 70 * 1024 or "H100" in upper_name or "A100" in upper_name:
+    elif memory_mb >= 70 * 1024 or name_only_h100_fallback:
         tier = "h100-class"
         auto_profile = "vast-h100"
         model_mode = "bf16"
